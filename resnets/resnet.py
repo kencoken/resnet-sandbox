@@ -3,7 +3,6 @@ import logging
 from keras.models import Model
 from keras.layers import (
     Input,
-    Activation,
     merge,
     Dense,
     Flatten
@@ -13,66 +12,32 @@ from keras.layers.convolutional import (
     MaxPooling2D,
     AveragePooling2D
 )
-from keras.layers.normalization import BatchNormalization
 
 import tensorflow as tf
-from keras import backend as K
 
-log = logging.getLogger('')
+from . import blocks
 
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
-sess = tf.Session(config=config)
-K.set_session(sess)
-
-
-def bn_relu(name, num):
-
-    def f(input):
-        bn = BatchNormalization(mode=0, axis=1, name='{}_bn{}'.format(name, num))(input)
-        relu = Activation('relu', name='{}_relu{}'.format(name, num))(bn)
-        return relu
-
-    return f
+log = logging.getLogger(__name__)
 
 
 def basic_block(output_sz, stride, name, preactivate=True, upsample=False):
 
-    def regular_shortcut_path_(input):
+    def main_path_(input):
+        return blocks.residual(name, stride, output_sz)(input)
 
-        if stride == 1:
-            return input
+    def shortcut_path_(input):
+        if upsample:
+            return blocks.shortcut_upsample(name, 3, stride, output_sz)(input)
         else:
-            return AveragePooling2D(pool_size=(stride, stride), border_mode='same')(input)
-
-    def upsample_shortcut_path_(input):
-
-        conv = Convolution2D(nb_filter=output_sz, nb_row=1, nb_col=1,
-                             subsample=(stride, stride), border_mode='same',
-                             init='he_normal',
-                             name='{}_conv4'.format(name))(input)
-
-        return conv
+            return blocks.shortcut(name, 3, stride)(input)
 
     def f(input):
-
         with tf.name_scope(name):
-
             if preactivate:
-                input = bn_relu(name, 0)(input)
-            conv1 = Convolution2D(nb_filter=output_sz, nb_row=3, nb_col=3,
-                                  subsample=(stride, stride), border_mode='same',
-                                  init='he_normal',
-                                  name='{}_conv1'.format(name))(input)
+                bn_relu0 = blocks.bn_relu(name, 0)(input)
 
-            bn_relu1 = bn_relu(name, 1)(conv1)
-            conv2 = Convolution2D(nb_filter=output_sz, nb_row=3, nb_col=3,
-                                  subsample=(1, 1), border_mode='same',
-                                  init='he_normal',
-                                  name='{}_conv2'.format(name))(bn_relu1)
-
-            residual = conv2
-            shortcut = upsample_shortcut_path_(input) if upsample else regular_shortcut_path_(input)
+            residual = main_path_(bn_relu0)
+            shortcut = shortcut_path_(input)
 
             return merge([shortcut, residual], mode='sum')
 
@@ -80,82 +45,29 @@ def basic_block(output_sz, stride, name, preactivate=True, upsample=False):
 
 def bottleneck_block(name, output_sz, stride=1, preactivate=True, upsample=False):
 
-    # block sub-components ---
-
     def main_path_(input):
+        return blocks.residual_bottleneck(name, stride, output_sz)(input)
 
-        bottleneck_sz = int(output_sz / 4)
-
-        conv1 = Convolution2D(nb_filter=bottleneck_sz, nb_row=1, nb_col=1,
-                              subsample=(stride, stride), border_mode='same',
-                              init='he_normal',
-                              name='{}_conv1'.format(name))(input)
-
-        bn_relu1 = bn_relu(name, 1)(conv1)
-        conv2 = Convolution2D(nb_filter=bottleneck_sz, nb_row=3, nb_col=3,
-                              subsample=(1, 1), border_mode='same',
-                              init='he_normal',
-                              name='{}_conv2'.format(name))(bn_relu1)
-
-        bn_relu2 = bn_relu(name, 2)(conv2)
-        conv3 = Convolution2D(nb_filter=output_sz, nb_row=1, nb_col=1,
-                              subsample=(1, 1), border_mode='same',
-                              init='he_normal',
-                              name='{}_conv3'.format(name))(bn_relu2)
-
-        return conv3
-
-    def regular_shortcut_path_(input):
-
-        if stride == 1:
-            return input
+    def shortcut_path_(input):
+        if upsample:
+            return blocks.shortcut_upsample(name, 4, stride, output_sz)(input)
         else:
-            return AveragePooling2D(pool_size=(stride, stride), border_mode='same')(input)
-
-    def upsample_shortcut_path_(input):
-
-        conv = Convolution2D(nb_filter=output_sz, nb_row=1, nb_col=1,
-                             subsample=(stride, stride), border_mode='same',
-                             init='he_normal',
-                             name='{}_conv4'.format(name))(input)
-
-        return conv
-
-    # regular / upsample blocks ---
-
-    def regular_block(input):
-
-        if preactivate:
-            bn_relu0 = bn_relu(name, 0)(input)
-            residual = main_path_(bn_relu0)
-        else:
-            residual = main_path_(input)
-
-        shortcut = regular_shortcut_path_(input)
-
-        return merge([shortcut, residual], mode='sum')
-
-    def upsample_block(input):
-
-        # in upsample block, first bn/relu is shared across both branches
-        if preactivate:
-            input = bn_relu(name, 0)(input)
-
-        residual = main_path_(input)
-        shortcut = upsample_shortcut_path_(input)
-
-        return merge([shortcut, residual], mode='sum')
-
-    # block factory ---
+            return blocks.shortcut(name, 4, stride)(input)
 
     def f(input):
-
         with tf.name_scope(name):
+            if preactivate:
+                bn_relu0 = blocks.bn_relu(name, 0)(input)
 
-            if not upsample:
-                return regular_block(input)
+                residual = main_path_(bn_relu0)
+                # in upsample block, first bn/relu is shared across both branches
+                shortcut = shortcut_path_(bn_relu0) if upsample else shortcut_path_(input)
+
             else:
-                return upsample_block(input)
+                residual = main_path_(input)
+                shortcut = shortcut_path_(input)
+
+            return merge([shortcut, residual], mode='sum')
 
     return f
 
@@ -186,7 +98,7 @@ def build_block_group(name, block_fn, n, nb_filter, stride, first_type=None):
 
     return f
 
-def resnet(dataset='imagenet', layer_count=None):
+def build_model(dataset='imagenet', layer_count=None):
 
     def imagenet(layer_count=152):
 
@@ -209,8 +121,7 @@ def resnet(dataset='imagenet', layer_count=None):
             conv1 = Convolution2D(nb_filter=64, nb_row=7, nb_col=7,
                                   subsample=(2, 2), border_mode='same',
                                   init='he_normal', name='conv1')(input)
-            conv1_bn = BatchNormalization(mode=0, axis=1)(conv1)
-            conv1_relu = Activation('relu', name='relu1')(conv1_bn)
+            conv1_relu = blocks.bn_relu('initial', 1)(conv1)
 
         pool1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2), border_mode='same',
                              name='pool1')(conv1_relu)
@@ -235,7 +146,7 @@ def resnet(dataset='imagenet', layer_count=None):
                                  nb_filter=cfg['filter_sz'][3], stride=2,
                                  first_type='upsample')(res4)
 
-        res5_bn_relu = bn_relu('final', 1)(res5)
+        res5_bn_relu = blocks.bn_relu('final', 1)(res5)
 
         pool2 = AveragePooling2D(pool_size=(7, 7), strides=(1, 1), border_mode='valid')(res5_bn_relu)
         fc1 = Flatten()(pool2)
@@ -270,7 +181,7 @@ def resnet(dataset='imagenet', layer_count=None):
                                  block_fn=basic_block, n=layer_count,
                                  nb_filter=64, stride=2, first_type='upsample')(res3)
 
-        res4_bn_relu = bn_relu('final', 1)(res4)
+        res4_bn_relu = blocks.bn_relu('final', 1)(res4)
 
         pool1 = AveragePooling2D(pool_size=(8, 8), strides=(1, 1), border_mode='valid')(res4_bn_relu)
         fc1 = Flatten()(pool1)
@@ -290,29 +201,3 @@ def resnet(dataset='imagenet', layer_count=None):
     dataset_fn = dataset_fn_map[dataset]
 
     return dataset_fn() if layer_count is None else dataset_fn(layer_count)
-
-def main():
-    # dataset = 'imagenet'
-    dataset = 'cifar10'
-    
-    import time
-    start = time.time()
-    model = resnet(dataset)
-    duration = time.time() - start
-    print('{} s to make model'.format(duration))
-
-    start = time.time()
-    model.output
-    duration = time.time() - start
-    print('{} s to get output'.format(duration))
-
-    model.summary()
-
-    # start = time.time()
-    # model.compile(loss='categorical_crossentropy', optimizer='sgd')
-    # duration = time.time() - start
-    # print('{} s to compile'.format(duration))
-
-if __name__ == '__main__':
-    main()
-    
