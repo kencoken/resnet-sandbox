@@ -158,7 +158,7 @@ def build_model(dataset='imagenet', layer_count=None):
 
     def cifar10(layer_count=32):
 
-        valid_layer_counts = [20, 32, 44, 56, 110, 1202]
+        valid_layer_counts = [1, 20, 32, 44, 56, 110, 1202]
         assert layer_count in valid_layer_counts, 'layer_count should be one of: {}'.format(valid_layer_counts)
 
         # start of model definition ---
@@ -183,9 +183,9 @@ def build_model(dataset='imagenet', layer_count=None):
 
         res4_bn_relu = blocks.bn_relu('final', 1)(res4)
 
-        pool1 = AveragePooling2D(pool_size=(8, 8), strides=(1, 1), border_mode='valid')(res4_bn_relu)
+        pool1 = AveragePooling2D(name='final_pool1', pool_size=(8, 8), strides=(1, 1), border_mode='valid')(res4_bn_relu)
         fc1 = Flatten()(pool1)
-        fc2 = Dense(output_dim=10, init='he_normal', activation='softmax')(fc1)
+        fc2 = Dense(name='output', output_dim=10, init='he_normal', activation='softmax')(fc1)
 
         model = Model(input=input, output=fc2)
 
