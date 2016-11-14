@@ -9,15 +9,16 @@ import tensorflow as tf
 
 from keras import backend as K
 from keras.optimizers import SGD
-from keras.datasets import cifar10
-from keras.utils import np_utils
 from keras.preprocessing.image import ImageDataGenerator
 from keras.callbacks import ProgbarLogger
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import LearningRateScheduler
 
-from resnets.callbacks import TensorBoardExtra
 from resnets import resnet
+from resnets.callbacks import TensorBoardExtra
+from data_loader.producers import CIFAR10Producer, ImageNetProducer
+
+IMAGE_NET_DIR = '/data/_datasets/ILSVRC2012'
 
 import sys
 sys.setrecursionlimit(10000)
@@ -86,23 +87,15 @@ def train_model(model, dataset, experiment_name):
 
     data_dir = prepare_data_dirs_(dataset, experiment_name)
 
-    with time_block('load cifar10'):
-        (X_train, y_train), (X_test, y_test) = cifar10.load_data()
-        Y_train = np_utils.to_categorical(y_train, 10)
-        Y_test = np_utils.to_categorical(y_test, 10)
-        X_train = X_train.astype(np.float32) / 255.0
-        X_test = X_test.astype(np.float32) / 255.0
-
-        # split into 45k train, 5k val
-        val_sz = 5000; train_sz = X_train.shape[0] - val_sz
-        val_idxs = np.random.choice(X_train.shape[0], size=val_sz, replace=False)
-        np.save(os.path.join(data_dir('snapshots'), 'val_idxs.npy'), val_idxs)
-        X_val = X_train[val_idxs]
-        Y_val = Y_train[val_idxs]
-        mask = np.ones(X_train.shape[0], np.bool)
-        mask[val_idxs] = 0
-        X_train = X_train[mask]
-        Y_train = Y_train[mask]
+    with time_block('load dataset'):
+        if dataset == 'cifar10':
+            producer = CIFAR10Producer(data_dir)
+        elif dataset == 'imagenet':
+            imnet_dir = IMAGE_NET_DIR
+            target_size = (224, 224)
+            producer = ImageNetProducer(imnet_dir, target_size=target_size)
+        else:
+            raise RuntimeError('Unknown dataset!')
 
     datagen_train = ImageDataGenerator(
         featurewise_center=True,
@@ -122,7 +115,7 @@ def train_model(model, dataset, experiment_name):
     )
 
     with time_block('fit data mean'):
-        datagen_train.fit(X_train)
+        datagen_train.fit(producer.train_sample())
         datagen_test.mean = datagen_train.mean
         datagen_test.std = datagen_train.std
         # save mean and std
@@ -132,41 +125,52 @@ def train_model(model, dataset, experiment_name):
     print('Start training...')
     batch_sz = 32
     base_lr = 0.1
-    to_train_epochs = lambda x: int(x*128/train_sz)
-    nb_epoch = to_train_epochs(64000)  # equivalent to 64k iters in paper
     epoch_divider = 10
-
-    def lr_schedule(epoch):
-        print('epoch is: {}'.format(epoch))
-        # equivalent to 32k, 48k iters in paper
-        bps = [to_train_epochs(x)*epoch_divider for x in [32000, 48000]]
-        n = sum([int(epoch > bp) for bp in bps])
-        lr = base_lr / math.pow(10, n)
-        print('bp is: {}'.format(bps))
-        print('n is: {}'.format(n))
-        print('learning rate is: {}'.format(lr))
-        return lr
 
     prog_callback = ProgbarLogger()
     tb_callback = TensorBoardExtra(log_dir=data_dir('logs'), histogram_freq=1, write_graph=True)
     chpt_callback = ModelCheckpoint(os.path.join(data_dir('snapshots'),
                                                  'weights.{epoch}-{val_loss:.2f}.h5'),
                                     save_weights_only=True)
-    lr_callback = LearningRateScheduler(lr_schedule)
-    
-    hist = model.fit_generator(datagen_train.flow(X_train, Y_train, batch_size=batch_sz),
-                               validation_data=datagen_test.flow(X_val, Y_val, batch_size=batch_sz*4),
-                               nb_val_samples=val_sz,
-                               samples_per_epoch=int(len(X_train)/epoch_divider), nb_epoch=nb_epoch*epoch_divider,
-                               callbacks=[prog_callback, tb_callback, chpt_callback, lr_callback])
-    print(hist)
+    callbacks = [prog_callback, tb_callback, chpt_callback]
 
-    eval_res = model.evaluate_generator(datagen_test.flow(X_test, Y_test, batch_size=batch_sz), val_samples=X_test.shape[0])
+    if dataset == 'cifar10':
+        to_train_epochs = lambda x: int(x*128/producer.size('train'))
+        nb_epoch = to_train_epochs(64000)  # equivalent to 64k iters in paper
+
+        def lr_schedule(epoch):
+            print('epoch is: {}'.format(epoch))
+            # equivalent to 32k, 48k iters in paper
+            bps = [to_train_epochs(x)*epoch_divider for x in [32000, 48000]]
+            n = sum([int(epoch > bp) for bp in bps])
+            lr = base_lr / math.pow(10, n)
+            print('bp is: {}'.format(bps))
+            print('n is: {}'.format(n))
+            print('learning rate is: {}'.format(lr))
+            return lr
+
+        lr_callback = LearningRateScheduler(lr_schedule)
+        callbacks.append(lr_callback)
+
+    elif dataset == 'imagenet':
+        pass
+
+    else:
+        nb_epoch = 1000
+
+    hist = model.fit_generator(producer.flow('train', datagen_train, batch_size=batch_sz),
+                               validation_data=producer.flow('val', datagen_test, batch_size=batch_sz*4),
+                               nb_val_samples=producer.size('val'),
+                               samples_per_epoch=int(producer.size('train')/epoch_divider), nb_epoch=nb_epoch*epoch_divider,
+                               callbacks=callbacks)
+    print(hist)
+    
+    eval_res = model.evaluate_generator(producer.flow('test', datagen_test, batch_size=batch_sz), val_samples=producer.size('test'))
     print(eval_res)
 
 def main():
     # dataset = 'imagenet'; layer_count = 18; experiment_name = 'resnet-18'
-    dataset = 'cifar10'; layer_count = 110; experiment_name = 'resnet-110'
+    dataset = 'cifar10'; layer_count = 32; experiment_name = 'resnet-32'
 
     model = prepare_model(dataset, layer_count)
     train_model(model, dataset, experiment_name)
