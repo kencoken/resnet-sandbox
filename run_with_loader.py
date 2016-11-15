@@ -15,7 +15,7 @@ from keras.callbacks import ModelCheckpoint
 from keras.callbacks import LearningRateScheduler
 
 from resnets import resnet
-from resnets.callbacks import TensorBoardExtra
+from keras_ext.callbacks import TensorBoardExtra
 from data_loader.producers import CIFAR10Producer, ImageNetProducer
 
 IMAGE_NET_DIR = '/data/_datasets/ILSVRC2012'

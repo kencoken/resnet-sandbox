@@ -16,7 +16,7 @@ from keras.callbacks import ProgbarLogger
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import LearningRateScheduler
 
-from resnets.callbacks import TensorBoardExtra
+from keras_ext.callbacks import TensorBoardExtra
 from resnets import resnet
 
 import sys
