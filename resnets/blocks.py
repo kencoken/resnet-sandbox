@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 def bn_relu(name, num):
 
     def f(input):
-        bn = BatchNormalization(mode=0, axis=1, name='{}_bn{}'.format(name, num))(input)
+        bn = BatchNormalization(mode=2, axis=1, name='{}_bn{}'.format(name, num))(input)
         relu = Activation('relu', name='{}_relu{}'.format(name, num))(bn)
         return relu
 
