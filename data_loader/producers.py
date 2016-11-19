@@ -4,6 +4,7 @@ import logging
 import numpy as np
 from scipy.io import loadmat
 
+from keras import backend as K
 from keras.utils import np_utils
 from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator
@@ -27,8 +28,6 @@ class ImagePathIterator(Iterator):
         where cls_idx is an index within 'classes'
         '''
 
-        assert classes is not None, 'Must specify classes when using ImagePathIterator!'
-
         # setup same as for DirectoryIterator
 
         if dim_ordering == 'default':
@@ -51,7 +50,6 @@ class ImagePathIterator(Iterator):
                 self.image_shape = self.target_size + (1,)
             else:
                 self.image_shape = (1,) + self.target_size
-        self.classes = classes
         if class_mode not in {'categorical', 'binary', 'sparse', None}:
             raise ValueError('Invalid class_mode:', class_mode,
                              '; expected one of "categorical", '
@@ -63,9 +61,13 @@ class ImagePathIterator(Iterator):
 
         # set filenames + index
         self.nb_sample = len(gt_dict)
-        self.filenames = gt_dict.keys()
-        self.classes = np.array(gt_dict.values(), dtype='int32')
-        assert np.max(self.classes) < len(self.classes), 'Ground truth contains class indices which couldn''t be matched to a class!'
+        self.filenames = list(gt_dict.keys())
+        self.classes = np.array(list(gt_dict.values()), dtype='int32')
+        if classes:
+            self.nb_class = len(classes)
+            assert np.max(self.classes) < len(classes), 'Ground truth contains class indices which couldn''t be matched to a class!'
+        else:
+            self.nb_class = np.max(self.classes)+1
 
         super().__init__(self.nb_sample, batch_size, shuffle, seed)
 
@@ -141,7 +143,6 @@ class ImageNetProducer():
 
         # read in validation gt (map fname -> index in classes array)
         val_image_paths = os.listdir(self.val_images_dir)
-        val_image_cls_idxs = 
         with open(os.path.join(self.devkit_dir, 'data/ILSVRC2012_validation_ground_truth.txt')) as f:
             val_image_cls_idxs = [int(line.strip()) for line in f]
         assert len(val_image_paths) == len(val_image_cls_idxs), 'Ground truth and num of images in val set differ!'

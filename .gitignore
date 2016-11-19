@@ -1,2 +1,5 @@
-*.pyc
+__pycache__
+.tramp_history
+/.cache
+/.idea
 /data

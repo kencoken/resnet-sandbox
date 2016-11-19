@@ -39,3 +39,4 @@ def to_multi_gpu(model, n_gpus=2):
         merged = merge(towers, mode='concat', concat_axis=0)
 
     return Model(input=[x], output=merged)
+
