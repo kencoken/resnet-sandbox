@@ -1,5 +1,6 @@
 __pycache__
 .tramp_history
+.ipynb_checkpoints
 /.cache
 /.idea
 /data
